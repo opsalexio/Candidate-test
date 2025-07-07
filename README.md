@@ -19,15 +19,15 @@ How to use this repository:
 
 1. Prerequisites Setup
 
-# Terraform
+Terraform
 brew install terraform
-# Azure CLI
+Azure CLI
 brew install azure-cli
-# Ansible
+Ansible
 brew install ansible
-# GitHub CLI (optional)
+GitHub CLI (optional)
 brew install gh
-# Azure auth
+Azure auth
 az login
 az ad sp create-for-rbac --name "keycloak-infra" --role Contributor --scopes /subscriptions/YOUR_SUB_ID --sdk-auth
 
