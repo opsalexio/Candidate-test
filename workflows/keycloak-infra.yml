@@ -1,0 +1,93 @@
+name: Keycloak Infrastructure Management
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: 'Infrastructure action (deploy/destroy)'
+        required: true
+        default: 'deploy'
+        type: choice
+        options:
+        - deploy
+        - destroy
+
+env:
+  TF_VERSION: 1.5.0
+  AZURE_CREDENTIALS: ${{ secrets.AZURE_CREDENTIALS }}
+  ANSIBLE_VAULT_PASSWORD: ${{ secrets.ANSIBLE_VAULT_PASSWORD }}
+
+jobs:
+  infrastructure:
+    runs-on: ubuntu-latest
+    environment: production
+    defaults:
+      run:
+        working-directory: ./terraform
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    # Azure Login
+    - name: Azure Login
+      uses: azure/login@v1
+      with:
+        creds: ${{ env.AZURE_CREDENTIALS }}
+
+    # Setup Terraform
+    - name: Setup Terraform
+      uses: hashicorp/setup-terraform@v2
+      with:
+        terraform_version: ${{ env.TF_VERSION }}
+
+    # Setup Ansible
+    - name: Setup Ansible
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y ansible
+        pip install ansible-vault
+
+    # Generate SSH Key (for deploy only)
+    - name: Generate SSH Key
+      if: github.event.inputs.action == 'deploy'
+      run: |
+        mkdir -p ./ansible/keys
+        ssh-keygen -t rsa -b 4096 -f ./ansible/keys/keycloak_ssh -N ""
+      working-directory: ./terraform
+
+    # Terraform Init
+    - name: Terraform Init
+      run: terraform init
+
+    # Conditional Execution
+    - name: Terraform Apply
+      if: github.event.inputs.action == 'deploy'
+      run: terraform apply -auto-approve
+
+    - name: Configure with Ansible
+      if: github.event.inputs.action == 'deploy'
+      run: |
+        export PUBLIC_IP=$(terraform output -raw public_ip_address)
+        echo "keycloak-vm ansible_host=$PUBLIC_IP ansible_user=adminuser" > inventory.ini
+        ansible-playbook -i inventory.ini ansible/playbook.yml \
+          --private-key ansible/keys/keycloak_ssh
+
+    - name: Terraform Destroy
+      if: github.event.inputs.action == 'destroy'
+      run: terraform destroy -auto-approve
+
+    # Upload SSH Key as Artifact (for debugging)
+    - name: Upload SSH Key
+      if: github.event.inputs.action == 'deploy' && always()
+      uses: actions/upload-artifact@v3
+      with:
+        name: ssh-key
+        path: ./terraform/ansible/keys/keycloak_ssh*
+        retention-days: 1
+
+    # Cleanup Azure credentials
+    - name: Azure Logout
+      run: |
+        az logout
+        rm -rf ~/.azure
