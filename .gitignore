@@ -1,0 +1,66 @@
+# Terraform files
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+*.tfvars.json
+terraform.plan
+terraform.tfplan
+.terraform.lock.hcl
+backend.tf
+
+# Ansible files
+ansible/keys/          # Auto-generated SSH keys
+ansible/*.retry
+ansible/inventory.ini  # Dynamically generated inventory
+ansible/vault.yml      # Encrypted variables
+
+# SSH keys
+*.pem
+*.pub
+id_rsa
+id_rsa.pub
+
+# Environment files
+.env
+.venv
+.env.local
+.env.development
+.env.test
+.env.production
+
+# Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# System files
+.DS_Store
+Thumbs.db
+
+# Log files
+*.log
+logs/
+
+# Docker/container files
+docker-compose.override.yml
+*.env
+
+# Keycloak temp files
+/tmp/
+/keycloak-data/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Node modules (if any frontend)
+node_modules/
+
+# Packer files (if used)
+packer_cache/
+*.manifest.json
