@@ -1,0 +1,198 @@
+---
+- name: Configure Keycloak and web server
+  hosts: keycloak
+  become: yes
+
+  vars:
+    keycloak_admin_user: admin
+    keycloak_admin_password: changeme
+    postgres_user: keycloak
+    postgres_password: changeme
+    postgres_db: keycloak
+    web_app_name: "My Secure App"
+    web_domain: "example.com"
+
+  tasks:
+    - name: Install required system packages
+      apt:
+        name:
+          - docker.io
+          - docker-compose
+          - nginx
+          - git
+        state: present
+        update_cache: yes
+
+    - name: Add user to docker group
+      user:
+        name: adminuser
+        groups: docker
+        append: yes
+
+    - name: Create directory structure
+      file:
+        path: "{{ item }}"
+        state: directory
+        owner: adminuser
+        group: adminuser
+      with_items:
+        - /opt/keycloak
+        - /opt/webapp
+
+    - name: Create docker-compose file for Keycloak and Postgres
+      copy:
+        dest: /opt/keycloak/docker-compose.yml
+        content: |
+          version: '3'
+          
+          services:
+            postgres:
+              image: postgres:13
+              volumes:
+                - postgres_data:/var/lib/postgresql/data
+              environment:
+                POSTGRES_DB: {{ postgres_db }}
+                POSTGRES_USER: {{ postgres_user }}
+                POSTGRES_PASSWORD: {{ postgres_password }}
+              networks:
+                - keycloak_network
+              
+            keycloak:
+              image: quay.io/keycloak/keycloak:latest
+              depends_on:
+                - postgres
+              environment:
+                DB_VENDOR: POSTGRES
+                DB_ADDR: postgres
+                DB_DATABASE: {{ postgres_db }}
+                DB_USER: {{ postgres_user }}
+                DB_SCHEMA: public
+                DB_PASSWORD: {{ postgres_password }}
+                KEYCLOAK_ADMIN: {{ keycloak_admin_user }}
+                KEYCLOAK_ADMIN_PASSWORD: {{ keycloak_admin_password }}
+                KC_PROXY: edge
+                KC_HOSTNAME: {{ web_domain }}
+              ports:
+                - "8080:8080"
+              networks:
+                - keycloak_network
+              command: ["start-dev"]
+          
+          volumes:
+            postgres_data:
+          
+          networks:
+            keycloak_network:
+              driver: bridge
+        owner: adminuser
+        group: adminuser
+
+    - name: Start Keycloak and Postgres containers
+      command: docker-compose up -d
+      args:
+        chdir: /opt/keycloak
+      become_user: adminuser
+
+    - name: Create simple web app with index.html
+      copy:
+        dest: /opt/webapp/index.html
+        content: |
+          <!DOCTYPE html>
+          <html>
+          <head>
+              <title>{{ web_app_name }}</title>
+              <style>
+                  body { font-family: Arial, sans-serif; text-align: center; padding: 50px; }
+                  h1 { color: #333; }
+              </style>
+          </head>
+          <body>
+              <h1>Welcome to {{ web_app_name }}</h1>
+              <p>This is a secure page protected by Keycloak.</p>
+              <p><a href="/secured">Access secured area</a></p>
+          </body>
+          </html>
+        owner: adminuser
+        group: adminuser
+
+    - name: Create secured web app page
+      copy:
+        dest: /opt/webapp/secured/index.html
+        content: |
+          <!DOCTYPE html>
+          <html>
+          <head>
+              <title>Secured Area - {{ web_app_name }}</title>
+              <style>
+                  body { font-family: Arial, sans-serif; text-align: center; padding: 50px; }
+                  h1 { color: #333; }
+              </style>
+          </head>
+          <body>
+              <h1>Secured Area</h1>
+              <p>This content is protected by Keycloak authentication.</p>
+              <p><a href="/">Back to home</a></p>
+          </body>
+          </html>
+        owner: adminuser
+        group: adminuser
+
+    - name: Configure Nginx as reverse proxy
+      copy:
+        dest: /etc/nginx/sites-available/{{ web_domain }}
+        content: |
+          server {
+              listen 80;
+              server_name {{ web_domain }};
+              
+              location / {
+                  root /opt/webapp;
+                  index index.html;
+              }
+              
+              location /auth {
+                  proxy_pass http://localhost:8080;
+                  proxy_set_header Host $host;
+                  proxy_set_header X-Real-IP $remote_addr;
+                  proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                  proxy_set_header X-Forwarded-Proto $scheme;
+              }
+              
+              location /secured {
+                  auth_request /auth-validate;
+                  root /opt/webapp;
+                  index index.html;
+              }
+              
+              location = /auth-validate {
+                  internal;
+                  proxy_pass http://localhost:8080/auth/realms/master/protocol/openid-connect/auth;
+                  proxy_pass_request_body off;
+                  proxy_set_header Content-Length "";
+                  proxy_set_header X-Original-URI $request_uri;
+              }
+              
+              location /error {
+                  root /opt/webapp;
+              }
+          }
+      notify: Restart Nginx
+
+    - name: Enable Nginx site
+      file:
+        src: /etc/nginx/sites-available/{{ web_domain }}
+        dest: /etc/nginx/sites-enabled/{{ web_domain }}
+        state: link
+      notify: Restart Nginx
+
+    - name: Remove default Nginx site
+      file:
+        path: /etc/nginx/sites-enabled/default
+        state: absent
+      notify: Restart Nginx
+
+  handlers:
+    - name: Restart Nginx
+      service:
+        name: nginx
+        state: restarted
